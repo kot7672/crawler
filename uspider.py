@@ -1,12 +1,15 @@
 import scrapy
 import sqlite3
+import json
 from urllib.parse import urljoin
+from text_extractor import extract
 
 
 class USpider(scrapy.Spider):
     start_urls = []
     custom_settings = {'HTTPERROR_ALLOW_ALL': True}
     download_delay = 0.25
+    extract_text = False
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -15,7 +18,7 @@ class USpider(scrapy.Spider):
         cursor = self.conn.cursor()
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS links (
-        url TEXT PRIMARY KEY,
+        url TEXT PRIMARY KEY NOT NULL,
         type TEXT NOT NULL,
         status INTEGER,
         length INTEGER,
@@ -24,6 +27,12 @@ class USpider(scrapy.Spider):
         visited INTEGER,
         completed INTEGER )
         """)
+        if self.extract_text == "db":
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS texts (
+            url TEXT PRIMARY KEY NOT NULL,
+            extracted_text TEXT )
+            """)
         self.conn.commit()
         for link in cursor.execute("SELECT url FROM links WHERE type = 'internal' AND completed = 0"):
             self.start_urls.append(link[0])
@@ -64,8 +73,24 @@ class USpider(scrapy.Spider):
             "type": "internal",
             "status": response.status
         }
+        cursor = self.conn.cursor()
         if response.status == 200:
             result["length"] = len(response.body)
+            if self.extract_text:
+                text = extract(response.body)
+                if self.extract_text == "db":
+                    cursor.execute(f"""
+                    INSERT OR REPLACE INTO texts (url, extracted_text) 
+                    VALUES ('{response.url}', '{text.replace("'", '"')}')
+                    """)
+                    self.conn.commit()
+                elif self.extract_text == "file":
+                    data = {
+                        "url": response.url,
+                        "text": text
+                    }
+                    with open(f"{self.name}_extracted.txt", "at", encoding="utf-8") as file:
+                        file.write("%s,\n" % json.dumps(data, ensure_ascii=False))
             try:
                 links = response.xpath("//a/@href").extract()
             except:
@@ -73,11 +98,11 @@ class USpider(scrapy.Spider):
             result["links"] = len(links)
         else:
             links = []
-        cursor = self.conn.cursor()
         cursor.execute(f"""
         INSERT OR REPLACE INTO links (
-        {", ".join([key for key in result])}, visited, completed) 
+        url, {", ".join([key for key in result])}, visited, completed) 
         VALUES (
+        '{response.url}', 
         {", ".join([f"'{result[key]}'" if type(result[key] == str) else str(result[key]) for key in result])}, 1, 0)
         """)
         self.conn.commit()
@@ -104,5 +129,5 @@ class USpider(scrapy.Spider):
                 yield response.follow(parsed_url["link"], self.parse)
             else:
                 yield {link: parsed_url}
-            cursor.execute(f"UPDATE links SET completed = 1 WHERE url = '{response.url}'")
-            self.conn.commit()
+        cursor.execute(f"UPDATE links SET completed = 1 WHERE url = '{response.url}'")
+        self.conn.commit()
