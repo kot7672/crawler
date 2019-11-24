@@ -44,6 +44,4 @@ def load_links_from_db(db, gen=False):
         return [x[0] for x in cursor]
     else:
         yield cursor.fetchone()[0]
-
-
-if __name__ == "__main__":
+    conn.close()
