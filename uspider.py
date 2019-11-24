@@ -38,6 +38,10 @@ class USpider(scrapy.Spider):
             self.start_urls.append(link[0])
 
     def parse_link(self, link, start_url):
+        if link.startswith("tel:"):
+            return {
+                "type": "other"
+            }
         link = urljoin(start_url, link)
         if link[-1] == '/':
             new_link = link[:-1]
